@@ -1,0 +1,10 @@
+{
+  "sonoma-sky-alpha": {
+    "url": "https://openrouter.ai/api/v1",
+    "key": "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"
+  },
+  "deep-seeek-v3.1": {
+    "url": "https://openrouter.ai/api/v1",
+    "key": "ANOTHER_KEY"
+  }
+}
