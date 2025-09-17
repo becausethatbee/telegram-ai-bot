@@ -1,111 +1,219 @@
+# bot.py (ИСПРАВЛЕННАЯ ВЕРСИЯ 3)
+import logging
 import os
-import requests
-import telebot
+import json
+from collections import defaultdict
+
+import httpx
 from dotenv import load_dotenv
-from telebot import types
-from models import MODELS
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram.constants import ParseMode, ChatAction
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
+# Кастомные импорты
+from models import MODELS, DEFAULT_MODEL
+
+# Загружаем переменные окружения из .env файла
 load_dotenv()
+
+# --- Настройки ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+YOUR_SITE_URL = "https://t.me/your_bot_username" # Замените на свое или оставьте
+YOUR_SITE_NAME = "My Telegram AI Bot"
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Настройки по умолчанию
-user_settings = {}  # chat_id -> {"model": ..., "context": ..., "history": [...]}
-DEFAULT_MODEL = "deepseek-chat"
-DEFAULT_CONTEXT = 0
+# Хранилище данных пользователей в оперативной памяти
+user_data = defaultdict(lambda: {
+    "history": [],
+    "context_enabled": True,
+    "model": DEFAULT_MODEL
+})
 
-def get_settings(chat_id):
-    if chat_id not in user_settings:
-        user_settings[chat_id] = {
-            "model": DEFAULT_MODEL,
-            "context": DEFAULT_CONTEXT,
-            "history": []
-        }
-    return user_settings[chat_id]
 
-def ask_model(chat_id, user_input: str) -> str:
-    settings = get_settings(chat_id)
-    model = settings["model"]
+# --- API Функция ---
 
-    if model not in MODELS:
-        return f"Модель {model} не найдена."
+async def call_openrouter_api(model: str, messages: list) -> dict:
+    """Асинхронно вызывает OpenRouter API с помощью httpx."""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                url="https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": YOUR_SITE_URL,
+                    "X-Title": YOUR_SITE_NAME,
+                },
+                json={"model": model, "messages": messages},
+                timeout=120,
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP Error: {e.response.status_code} - {e.response.text}")
+            try:
+                error_details = e.response.json().get("error", {}).get("message", e.response.text)
+            except json.JSONDecodeError:
+                error_details = e.response.text
+            return {"error": f"Ошибка API: {e.response.status_code}. {error_details}"}
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}")
+            return {"error": f"Произошла непредвиденная ошибка: {str(e)}"}
 
-    # Добавляем сообщение пользователя в историю
-    settings["history"].append({"role": "user", "content": user_input})
 
-    # Обрезаем историю по контексту
-    ctx_size = settings["context"]
-    if ctx_size > 0:
-        messages = settings["history"][-ctx_size:]
+# --- Функции Клавиатур ---
+
+def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    context_status = "Контекст: ✅ ВКЛ" if user_data[user_id]["context_enabled"] else "Контекст: ❌ ВЫКЛ"
+    keyboard = [["/models", "/reset"], [context_status]]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+def get_models_keyboard() -> InlineKeyboardMarkup:
+    keyboard = []
+    for model_id, details in MODELS.items():
+        button_text = f"📸 {details['name']}" if details['vision'] else details['name']
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"model:{model_id}")])
+    return InlineKeyboardMarkup(keyboard)
+
+# --- Обработчики Команд ---
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user, user_id = update.effective_user, update.effective_user.id
+    user_data[user_id] = {
+        "history": [], 
+        "context_enabled": True, 
+        "model": DEFAULT_MODEL
+    }
+    logger.info(f"User {user.username} (ID: {user_id}) started the bot.")
+    await update.message.reply_html(
+        rf"Привет, {user.mention_html()}! Я AI-ассистент. Отправьте мне текст или "
+        "изображение с подписью, чтобы начать.\n\n"
+        "📸 - модели, работающие с изображениями.",
+        reply_markup=get_main_keyboard(user_id)
+    )
+    await models_command(update, context)
+
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    user_data[user_id]["history"] = []
+    logger.info(f"History reset for user ID: {user_id}")
+    await update.message.reply_text("История чата сброшена.", reply_markup=get_main_keyboard(user_id))
+
+async def models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    current_model_id = user_data[user_id].get('model', DEFAULT_MODEL)
+    current_model_name = MODELS.get(current_model_id, {}).get('name', 'Неизвестная')
+    await update.message.reply_text(
+        f"Текущая модель: `{current_model_name}`\n\nВыберите новую модель:",
+        reply_markup=get_models_keyboard(),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def toggle_context_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    user_data[user_id]["context_enabled"] = not user_data[user_id]["context_enabled"]
+    state = "включен" if user_data[user_id]["context_enabled"] else "выключен"
+    logger.info(f"Context toggled to {state} for user ID: {user_id}")
+    await update.message.reply_text(f"Режим контекста {state}.", reply_markup=get_main_keyboard(user_id))
+
+
+# --- Обработчики Сообщений ---
+
+async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    # --- ИСПРАВЛЕНИЕ №1: Разбиваем строку только по первому ':' ---
+    model_id = query.data.split(":", 1)[1]
+    
+    user_data[user_id]["model"] = model_id
+    model_name = MODELS.get(model_id, {}).get('name', "Неизвестная")
+    
+    logger.info(f"User ID {user_id} switched model to: {model_id}")
+    await query.edit_message_text(text=f"✅ Модель установлена: `{model_name}`", parse_mode=ParseMode.MARKDOWN)
+
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_input = update.message.text
+    
+    if user_input == "/reset": return await reset_command(update, context)
+    if user_input == "/models": return await models_command(update, context)
+    if user_input.startswith("Контекст:"): return await toggle_context_command(update, context)
+
+    # --- ИСПРАВЛЕНИЕ №2: Убрана проверка, блокирующая текст для vision-моделей ---
+    # Теперь любой текст просто отправляется на обработку в любую модель
+    await process_request(update, context, user_input)
+
+async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    current_model_id = user_data[user_id]['model']
+
+    if not MODELS[current_model_id]['vision']:
+        await update.message.reply_text(
+            f"Текущая модель `{MODELS[current_model_id]['name']}` не умеет работать с изображениями. "
+            "Пожалуйста, выберите 'зрячую' модель (с 📸) через команду /models."
+        )
+        return
+
+    photo_file = await update.message.photo[-1].get_file()
+    image_url = photo_file.file_path
+    
+    text_prompt = update.message.caption or "Что на этом изображении?"
+
+    vision_payload = [
+        {"type": "text", "text": text_prompt},
+        {"type": "image_url", "image_url": {"url": image_url}}
+    ]
+    await process_request(update, context, text_prompt, vision_payload)
+
+async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str, vision_payload: list = None) -> None:
+    user_id = update.effective_user.id
+    await context.bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
+
+    messages_for_api = []
+    if user_data[user_id]["context_enabled"]:
+        messages_for_api.extend(user_data[user_id]["history"])
+
+    if vision_payload:
+        messages_for_api.append({"role": "user", "content": vision_payload})
     else:
-        messages = [{"role": "user", "content": user_input}]
+        messages_for_api.append({"role": "user", "content": user_input})
+    
+    api_response = await call_openrouter_api(user_data[user_id]["model"], messages_for_api)
 
-    model_cfg = MODELS[model]
-    headers = model_cfg["headers"](OPENROUTER_KEY)
-    payload = model_cfg["payload"](messages)
+    if "error" in api_response:
+        bot_response_text = api_response["error"]
+    else:
+        bot_response_text = api_response.get('choices', [{}])[0].get('message', {}).get('content', 'Не удалось получить ответ от модели.')
 
-    try:
-        resp = requests.post(model_cfg["url"], headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        reply = data["choices"][0]["message"]["content"]
+    if user_data[user_id]["context_enabled"] and "error" not in api_response:
+        user_data[user_id]["history"].append({"role": "user", "content": user_input})
+        user_data[user_id]["history"].append({"role": "assistant", "content": bot_response_text})
 
-        # Сохраняем ответ ассистента в историю
-        settings["history"].append({"role": "assistant", "content": reply})
-        return reply
-    except Exception as e:
-        return f"Ошибка при запросе к модели: {e}"
+    await update.message.reply_text(bot_response_text, reply_markup=get_main_keyboard(user_id))
 
-# === Команды ===
-@bot.message_handler(commands=["start"])
-def start_message(message):
-    bot.reply_to(message, "Привет! Я AI-бот.\nИспользуй кнопки /model и /context для настроек.")
+# --- Основная Функция ---
 
-# === Модели через кнопки ===
-@bot.message_handler(commands=["model"])
-def choose_model(message):
-    chat_id = message.chat.id
-    markup = types.InlineKeyboardMarkup()
-    for model_name in MODELS.keys():
-        btn = types.InlineKeyboardButton(model_name, callback_data=f"model:{model_name}")
-        markup.add(btn)
-    bot.send_message(chat_id, "Выбери модель:", reply_markup=markup)
+def main() -> None:
+    if not TELEGRAM_TOKEN or not OPENROUTER_API_KEY:
+        logger.error("Критическая ошибка: TELEGRAM_TOKEN или OPENROUTER_API_KEY не найдены в .env файле!")
+        return
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("model:"))
-def callback_model(call):
-    chat_id = call.message.chat.id
-    model = call.data.split(":")[1]
-    get_settings(chat_id)["model"] = model
-    bot.answer_callback_query(call.id, f"Модель переключена на {model}")
-    bot.send_message(chat_id, f"Теперь активна модель: {model}")
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# === Контекст через кнопки ===
-@bot.message_handler(commands=["context"])
-def choose_context(message):
-    chat_id = message.chat.id
-    markup = types.InlineKeyboardMarkup()
-    for ctx in [0, 5, 10, 21]:
-        btn = types.InlineKeyboardButton(str(ctx), callback_data=f"context:{ctx}")
-        markup.add(btn)
-    bot.send_message(chat_id, "Выбери контекст сообщений:", reply_markup=markup)
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("reset", reset_command))
+    application.add_handler(CommandHandler("models", models_command))
+    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model:"))
+    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo_message))
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("context:"))
-def callback_context(call):
-    chat_id = call.message.chat.id
-    ctx = int(call.data.split(":")[1])
-    get_settings(chat_id)["context"] = ctx
-    bot.answer_callback_query(call.id, f"Контекст установлен: {ctx}")
-    bot.send_message(chat_id, f"Теперь бот учитывает последние {ctx} сообщений")
+    logger.info("Бот запускается...")
+    application.run_polling()
 
-# === Основной обработчик текста ===
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    chat_id = message.chat.id
-    user_input = message.text
-    reply = ask_model(chat_id, user_input)
-    bot.reply_to(message, reply)
-
-print("Бот запущен... Ctrl+C для остановки")
-bot.infinity_polling()
+if __name__ == "__main__":
+    main()

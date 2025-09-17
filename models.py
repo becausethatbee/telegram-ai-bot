@@ -1,123 +1,53 @@
+# models.py
+# Структура: "id_модели": {"name": "Имя для кнопки", "vision": True/False}
+# ID моделей взяты точно из вашего списка.
+
 MODELS = {
-    "deepseek-chat": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "deepseek/deepseek-chat-v3.1:free",
-            "messages": messages
-        }
+    # --- Vision (зрячие) модели ---
+    "openrouter/sonoma-dusk-alpha": {
+        "name": "Sonoma Dusk Alpha",
+        "vision": True,
     },
-    "sonoma-sky": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "openrouter/sonoma-sky-alpha",
-            "messages": messages
-        }
+    "google/gemini-2.0-flash-exp:free": {
+        "name": "Gemini 2.0 Flash Exp (Free)",
+        "vision": True,
     },
-    "sonoma-dusk": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "openrouter/sonoma-dusk-alpha",
-            "messages": messages
-        }
+    "qwen/qwen2.5-vl-72b-instruct:free": {
+        "name": "Qwen 2.5 VL 72B (Free)",
+        "vision": True,
     },
-    "chimera": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "tngtech/deepseek-r1t2-chimera:free",
-            "messages": messages
-        }
+    "google/gemma-3-27b-it:free": {
+        "name": "Gemma 3 27B IT (Free)",
+        "vision": True,
     },
-    "qwen-coder": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "qwen/qwen3-coder:free",
-            "messages": messages
-        }
+
+    # --- Текстовые модели ---
+    "deepseek/deepseek-chat-v3.1:free": {
+        "name": "Deepseek Chat v3.1 (Free)",
+        "vision": False,
     },
-    "deepseek-r1": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "deepseek/deepseek-r1-0528:free",
-            "messages": messages
-        }
+    "tngtech/deepseek-r1t2-chimera:free": {
+        "name": "Deepseek R1T2 Chimera (Free)",
+        "vision": False,
     },
-    "gpt-oss": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "openai/gpt-oss-20b:free",
-            "messages": messages
-        }
+    "qwen/qwen3-coder:free": {
+        "name": "Qwen 3 Coder (Free)",
+        "vision": False,
     },
-    "mai-ds": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "microsoft/mai-ds-r1:free",
-            "messages": messages
-        }
+    "z-ai/glm-4.5-air:free": {
+        "name": "GLM 4.5 Air (Free)",
+        "vision": False,
     },
-    "gemini": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "google/gemini-2.0-flash-exp:free",
-            "messages": messages
-        }
+    "moonshotai/kimi-k2:free": {
+        "name": "Kimi K2 (Free)",
+        "vision": False,
     },
-    "llama": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "meta-llama/llama-3.3-70b-instruct:free",
-            "messages": messages
-        }
+    "nvidia/nemotron-nano-9b-v2:free": {
+        "name": "Nemotron Nano 9B v2 (Free)",
+        "vision": False,
     },
-    "kimi": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": lambda key: {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        "payload": lambda messages: {
-            "model": "moonshotai/kimi-k2:free",
-            "messages": messages
-        }
-    }
 }
+
+# Модель по умолчанию при старте бота.
+# Выбрана из вашего списка бесплатных vision-моделей.
+DEFAULT_MODEL = "google/gemini-2.0-flash-exp:free"
