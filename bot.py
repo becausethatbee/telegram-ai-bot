@@ -1,4 +1,4 @@
-# bot.py (ИСПРАВЛЕННАЯ ВЕРСИЯ 3)
+# bot.py (ИСПРАВЛЕННАЯ ВЕРСИЯ 4)
 import logging
 import os
 import json
@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.constants import ParseMode, ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram.error import BadRequest
 
 # Кастомные импорты
 from models import MODELS, DEFAULT_MODEL
@@ -19,24 +20,18 @@ load_dotenv()
 # --- Настройки ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-YOUR_SITE_URL = "https://t.me/your_bot_username" # Замените на свое или оставьте
+YOUR_SITE_URL = "https://t.me/your_bot_username"
 YOUR_SITE_NAME = "My Telegram AI Bot"
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Хранилище данных пользователей в оперативной памяти
-user_data = defaultdict(lambda: {
-    "history": [],
-    "context_enabled": True,
-    "model": DEFAULT_MODEL
-})
-
+user_data = defaultdict(lambda: {"history": [], "context_enabled": True, "model": DEFAULT_MODEL})
 
 # --- API Функция ---
-
 async def call_openrouter_api(model: str, messages: list) -> dict:
-    """Асинхронно вызывает OpenRouter API с помощью httpx."""
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
@@ -48,7 +43,7 @@ async def call_openrouter_api(model: str, messages: list) -> dict:
                     "X-Title": YOUR_SITE_NAME,
                 },
                 json={"model": model, "messages": messages},
-                timeout=120,
+                timeout=180, # Увеличено время ожидания для vision моделей
             )
             response.raise_for_status()
             return response.json()
@@ -63,9 +58,34 @@ async def call_openrouter_api(model: str, messages: list) -> dict:
             logger.error(f"An unexpected error occurred: {e}")
             return {"error": f"Произошла непредвиденная ошибка: {str(e)}"}
 
+# --- НОВАЯ ФУНКЦИЯ для отправки длинных сообщений ---
+async def send_long_message(update: Update, text: str, reply_markup=None):
+    """Отправляет длинное сообщение, разбивая его на части, если необходимо."""
+    if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+        return
+
+    parts = []
+    while len(text) > 0:
+        if len(text) > TELEGRAM_MAX_MESSAGE_LENGTH:
+            part = text[:TELEGRAM_MAX_MESSAGE_LENGTH]
+            last_newline = part.rfind('\n')
+            if last_newline != -1:
+                parts.append(part[:last_newline])
+                text = text[last_newline + 1:]
+            else:
+                parts.append(part)
+                text = text[TELEGRAM_MAX_MESSAGE_LENGTH:]
+        else:
+            parts.append(text)
+            break
+            
+    for i, part in enumerate(parts):
+        # Отправляем клавиатуру только с последней частью
+        current_reply_markup = reply_markup if i == len(parts) - 1 else None
+        await update.message.reply_text(part, reply_markup=current_reply_markup)
 
 # --- Функции Клавиатур ---
-
 def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     context_status = "Контекст: ✅ ВКЛ" if user_data[user_id]["context_enabled"] else "Контекст: ❌ ВЫКЛ"
     keyboard = [["/models", "/reset"], [context_status]]
@@ -77,16 +97,11 @@ def get_models_keyboard() -> InlineKeyboardMarkup:
         button_text = f"📸 {details['name']}" if details['vision'] else details['name']
         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"model:{model_id}")])
     return InlineKeyboardMarkup(keyboard)
-
+    
 # --- Обработчики Команд ---
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user, user_id = update.effective_user, update.effective_user.id
-    user_data[user_id] = {
-        "history": [], 
-        "context_enabled": True, 
-        "model": DEFAULT_MODEL
-    }
+    user_data[user_id] = {"history": [], "context_enabled": True, "model": DEFAULT_MODEL}
     logger.info(f"User {user.username} (ID: {user_id}) started the bot.")
     await update.message.reply_html(
         rf"Привет, {user.mention_html()}! Я AI-ассистент. Отправьте мне текст или "
@@ -119,15 +134,12 @@ async def toggle_context_command(update: Update, context: ContextTypes.DEFAULT_T
     logger.info(f"Context toggled to {state} for user ID: {user_id}")
     await update.message.reply_text(f"Режим контекста {state}.", reply_markup=get_main_keyboard(user_id))
 
-
 # --- Обработчики Сообщений ---
-
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     
     user_id = query.from_user.id
-    # --- ИСПРАВЛЕНИЕ №1: Разбиваем строку только по первому ':' ---
     model_id = query.data.split(":", 1)[1]
     
     user_data[user_id]["model"] = model_id
@@ -138,13 +150,9 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_input = update.message.text
-    
     if user_input == "/reset": return await reset_command(update, context)
     if user_input == "/models": return await models_command(update, context)
     if user_input.startswith("Контекст:"): return await toggle_context_command(update, context)
-
-    # --- ИСПРАВЛЕНИЕ №2: Убрана проверка, блокирующая текст для vision-моделей ---
-    # Теперь любой текст просто отправляется на обработку в любую модель
     await process_request(update, context, user_input)
 
 async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -163,10 +171,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     text_prompt = update.message.caption or "Что на этом изображении?"
 
-    vision_payload = [
-        {"type": "text", "text": text_prompt},
-        {"type": "image_url", "image_url": {"url": image_url}}
-    ]
+    vision_payload = [{"type": "text", "text": text_prompt}, {"type": "image_url", "image_url": {"url": image_url}}]
     await process_request(update, context, text_prompt, vision_payload)
 
 async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str, vision_payload: list = None) -> None:
@@ -177,10 +182,9 @@ async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     if user_data[user_id]["context_enabled"]:
         messages_for_api.extend(user_data[user_id]["history"])
 
-    if vision_payload:
-        messages_for_api.append({"role": "user", "content": vision_payload})
-    else:
-        messages_for_api.append({"role": "user", "content": user_input})
+    # Готовим сообщение для API
+    user_message_content = vision_payload if vision_payload else user_input
+    messages_for_api.append({"role": "user", "content": user_message_content})
     
     api_response = await call_openrouter_api(user_data[user_id]["model"], messages_for_api)
 
@@ -189,14 +193,18 @@ async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     else:
         bot_response_text = api_response.get('choices', [{}])[0].get('message', {}).get('content', 'Не удалось получить ответ от модели.')
 
+    # Сохраняем в историю
     if user_data[user_id]["context_enabled"] and "error" not in api_response:
-        user_data[user_id]["history"].append({"role": "user", "content": user_input})
+        # --- БОНУС-ФИКС: Правильно сохраняем контекст для vision ---
+        # Раньше сохранялся только текст "что на картинке", а не сама картинка,
+        # из-за чего бот "забывал" о ней при следующем вопросе.
+        user_data[user_id]["history"].append({"role": "user", "content": user_message_content})
         user_data[user_id]["history"].append({"role": "assistant", "content": bot_response_text})
 
-    await update.message.reply_text(bot_response_text, reply_markup=get_main_keyboard(user_id))
-
+    # --- ИЗМЕНЕНИЕ: Используем новую функцию для отправки ---
+    await send_long_message(update, bot_response_text, reply_markup=get_main_keyboard(user_id))
+    
 # --- Основная Функция ---
-
 def main() -> None:
     if not TELEGRAM_TOKEN or not OPENROUTER_API_KEY:
         logger.error("Критическая ошибка: TELEGRAM_TOKEN или OPENROUTER_API_KEY не найдены в .env файле!")

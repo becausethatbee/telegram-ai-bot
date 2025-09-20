@@ -4,10 +4,22 @@
 
 MODELS = {
     # --- Vision (зрячие) модели ---
-    "openrouter/sonoma-dusk-alpha": {
-        "name": "Sonoma Dusk Alpha",
-        "vision": True,
-    },
+
+
+
+
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free": {
+        "name": "Uncensored",
+        "vision": False,
+#    },"openrouter/sonoma-sky-alpha": {
+#        "name": "Sonoma Sky Alpha",
+#        "vision": True,
+#    },
+#
+#    "openrouter/sonoma-dusk-alpha": {
+#        "name": "Sonoma Dusk Alpha",
+#        "vision": True,
+#    },
     "google/gemini-2.0-flash-exp:free": {
         "name": "Gemini 2.0 Flash Exp (Free)",
         "vision": True,
@@ -50,4 +62,4 @@ MODELS = {
 
 # Модель по умолчанию при старте бота.
 # Выбрана из вашего списка бесплатных vision-моделей.
-DEFAULT_MODEL = "google/gemini-2.0-flash-exp:free"
+DEFAULT_MODEL = "openrouter/sonoma-sky-alpha"
